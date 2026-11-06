@@ -719,4 +719,43 @@
         @test isnothing(file.paw)
         @test isnothing(file.gipaw)
     end
+
+    @testset "Augmentation without Taylor expansion (nqf = 0)" begin
+        # QE writes `nqf = 0` with no PP_RINNER and no PP_QFCOEF blocks; the PP_QIJ
+        # functions still follow. Build such a file from a GBRV file (nqf = 8).
+        filepath = UPF1_CASE_FILEPATHS["si_pbesol_v1.uspp.F.UPF"]
+        reference = load_psp_file(filepath)
+        text = read(filepath, String)
+        text = replace(text, r"<PP_RINNER>.*?</PP_RINNER>\s*\n"s => "",
+                       r"<PP_QFCOEF>.*?</PP_QFCOEF>\s*\n"s => "")
+        text = replace(text, r"(<PP_QIJ>\s*\n\s*)\d+"s => s"\g<1>0")
+        outpath = joinpath(mktempdir(; cleanup = true), "nqf0.UPF")
+        write(outpath, text)
+        file = load_psp_file(outpath)
+
+        augmentation = file.nonlocal.augmentation
+        @test !isnothing(augmentation)
+        @test augmentation.nqf == 0
+        @test isnothing(augmentation.qfcoefs)
+        @test isnothing(augmentation.rinner)
+        @test augmentation.q ≈ reference.nonlocal.augmentation.q
+        for (qij, reference_qij) in zip(augmentation.qijs, reference.nonlocal.augmentation.qijs)
+            @test (qij.first_index, qij.second_index) ==
+                  (reference_qij.first_index, reference_qij.second_index)
+            @test qij.qij ≈ reference_qij.qij
+        end
+        # The rest of the file is read as before
+        @test file.nonlocal.dij ≈ reference.nonlocal.dij
+        @test file.rhoatom ≈ reference.rhoatom
+    end
+
+    @testset "Taylor coefficients are indexed by projector pair" begin
+        file = load_psp_file(UPF1_CASE_FILEPATHS["si_pbesol_v1.uspp.F.UPF"])
+        augmentation = file.nonlocal.augmentation
+        for (qfcoef, qij) in zip(augmentation.qfcoefs, augmentation.qijs)
+            @test isnothing(qfcoef.angular_momentum)
+            @test (qfcoef.first_index, qfcoef.second_index) ==
+                  (qij.first_index, qij.second_index)
+        end
+    end
 end

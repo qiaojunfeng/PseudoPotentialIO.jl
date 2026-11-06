@@ -259,24 +259,28 @@ function upf1_parse_augmentation(io::IO, mesh_size::Int, number_of_proj::Int, l_
     pos = position(io)
     read_until(io, "<PP_QIJ>")
 
-    # The first line contains the number of augmentation functions (`Number of Q Functions`)
+    # The first line contains `nqf`, the number of coefficients of the Taylor expansion
+    # of the augmentation functions at small radius. `nqf = 0` means no expansion: the
+    # `PP_RINNER` and `PP_QFCOEF` blocks are absent, but the augmentation functions
+    # still follow (QE `read_upf_v1`).
     s = split(readline(io))
     nqf = parse(Int, s[1])
 
-    if nqf == 0
-        return nothing
+    if nqf > 0
+        # Read the block containing the inner radial cutoffs for each angular momentum
+        # L = 0, ..., 2l_max of the augmentation functions. Inside these radii, the
+        # augmentation functions are determined by a set of polynomial coefficients
+        # `qfcoef`
+        read_until(io, "<PP_RINNER>")
+        rinner = Vector{Float64}(undef, 2l_max + 1)
+        for i in 1:(2l_max + 1)
+            s = split(readline(io))
+            rinner[i] = parse(Float64, s[2])
+        end
+        read_until(io, "</PP_RINNER>")
+    else
+        rinner = nothing
     end
-
-    # Read the block containing the inner radial cutoffs for each m quantum number of
-    # the maximum angular momentum channel. Inside these radii, the augmentation functions
-    # are determined by a set of polynomial coefficients `qfcoef`
-    read_until(io, "<PP_RINNER>")
-    rinner = Vector{Float64}(undef, 2l_max + 1)
-    for i in 1:(2l_max + 1)
-        s = split(readline(io))
-        rinner[i] = parse(Float64, s[2])
-    end
-    read_until(io, "</PP_RINNER>")
 
     q = zeros(Float64, number_of_proj, number_of_proj)
     qijs = UpfQij[]
@@ -295,11 +299,14 @@ function upf1_parse_augmentation(io::IO, mesh_size::Int, number_of_proj::Int, l_
 
         qij = read_mesh_data(Float64, io, mesh_size)
 
-        # Read the `nqf` polynomial coefficients for each magnetic quantum number of the
-        # maximum angular momentum channel
-        read_until(io, "<PP_QFCOEF>")
-        qfcoef = read_mesh_data(Float64, io, nqf * (2l_max + 1))
-        read_until(io, "</PP_QFCOEF>")
+        # Read the `nqf` polynomial coefficients for each angular momentum L of the
+        # augmentation function, `nqf` fastest
+        if nqf > 0
+            read_until(io, "<PP_QFCOEF>")
+            qfcoef = read_mesh_data(Float64, io, nqf * (2l_max + 1))
+            read_until(io, "</PP_QFCOEF>")
+            push!(qfcoefs, UpfQfcoef(qfcoef, nothing, first_index, second_index))
+        end
 
         # These values are given by UPF v2 but not by UPF v1
         is_null = nothing
@@ -308,8 +315,8 @@ function upf1_parse_augmentation(io::IO, mesh_size::Int, number_of_proj::Int, l_
         q[first_index, second_index] = Q_int
         q[second_index, first_index] = Q_int
         push!(qijs, UpfQij(qij, first_index, second_index, composite_index, is_null))
-        push!(qfcoefs, UpfQfcoef(qfcoef, first_index, second_index, composite_index))
     end
+    nqf > 0 || (qfcoefs = nothing)
 
     # These values are (sometimes) given by UPF v2 but not by UPF v1
     multipoles = nothing
