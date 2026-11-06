@@ -880,4 +880,16 @@
             @test new.wfc ≈ old.wfc
         end
     end
+
+    @testset "Spin-orbit data round trip (PP_RELWFC.i, PP_RELBETA.i)" begin
+        psp = load_psp_file(UPF2_CASE_FILEPATHS["Mg.upf"])
+        @test psp.header.has_so
+        outpath = joinpath(mktempdir(; cleanup = true), "tmp.upf")
+        save_psp_file(outpath, psp; format = "UPF v2.0.1")
+        @test occursin("<PP_RELWFC.1", read(outpath, String))
+        @test occursin("<PP_RELBETA.1", read(outpath, String))
+        newpsp = load_psp_file(outpath)
+        @test [w.jchi for w in newpsp.spin_orb.relwfcs] == [w.jchi for w in psp.spin_orb.relwfcs]
+        @test [b.jjj for b in newpsp.spin_orb.relbetas] == [b.jjj for b in psp.spin_orb.relbetas]
+    end
 end
