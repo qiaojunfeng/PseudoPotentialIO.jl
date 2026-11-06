@@ -243,9 +243,10 @@ function upf2_dump_mesh(m::UpfMesh)::EzXML.Node
 end
 
 function upf2_parse_qij(node::EzXML.Node)
-    # Metadata
-    first_index = get_attr(Int, node, "first_index")
-    second_index = get_attr(Int, node, "second_index")
+    # Metadata; the indices are also in the tag name, `PP_QIJ.$i.$j`
+    tag_indices = parse.(Int, split(nodename(node), ".")[2:3])
+    first_index = something(get_attr(Int, node, "first_index"), tag_indices[1])
+    second_index = something(get_attr(Int, node, "second_index"), tag_indices[2])
     composite_index = get_attr(Int, node, "composite_index")
     is_null = get_attr(Bool, node, "is_null")
     # PP_QIJ.$i.$j
@@ -254,7 +255,7 @@ function upf2_parse_qij(node::EzXML.Node)
 end
 
 function upf2_dump_qij(qij::UpfQij)::EzXML.Node
-    node = ElementNode("PP_QIJ")
+    node = ElementNode("PP_QIJ.$(qij.first_index).$(qij.second_index)")
     set_attr!(node, "first_index", qij.first_index)
     set_attr!(node, "second_index", qij.second_index)
     set_attr!(node, "composite_index", qij.composite_index)
@@ -316,28 +317,33 @@ function upf2_parse_augmentation(node::EzXML.Node)
         multipoles = parse_nodecontent(multipoles_node)
     end
 
+    # Taylor coefficients of the augmentation functions at small radius, stored as the
+    # Fortran array qfcoef(nqf, nqlc, nbeta, nbeta) (QE `read_upf_new`); split here into
+    # one `UpfQfcoef` per projector pair i ≤ j, `nqf` fastest, as for UPF v1
     qfcoef_node = findfirst("PP_QFCOEF", node)
     if isnothing(qfcoef_node)
         qfcoefs = nothing
     else
-        error("Cannot parse UPF v2.0.1 with PP_QFCOEF")
-        # qfcoefs = parse_nodecontent(qfcoef_node)
+        values = parse_nodecontent(qfcoef_node)
+        n_l = length(values) ÷ (nqf * nq^2)
+        coefficients = reshape(values, nqf, n_l, nq, nq)
+        qfcoefs = [UpfQfcoef(vec(coefficients[:, :, i, j]), nothing, i, j)
+                   for i in 1:nq for j in i:nq]
     end
 
     rinner_node = findfirst("PP_RINNER", node)
     if isnothing(rinner_node)
         rinner = nothing
     else
-        error("Cannot parse UPF v2.0.1 with PP_RINNER")
-        # rinner = parse_nodecontent(rinner_node)
+        rinner = parse_nodecontent(rinner_node)
     end
 
-    qij_nodes = [n for n in eachnode(node) if occursin("PP_QIJ.", nodename(n))]
+    # `PP_QIJ.i.j` but not `PP_QIJL.i.j.l`
+    qij_nodes = [n for n in eachnode(node) if startswith(nodename(n), "PP_QIJ.")]
     if isempty(qij_nodes)
         qijs = nothing
     else
-        error("Cannot parse UPF v2.0.1 with PP_QIJ.i.j")
-        # qijs = upf2_parse_qij.(qij_nodes)
+        qijs = upf2_parse_qij.(qij_nodes)
     end
 
     qijl_nodes = [n for n in eachnode(node) if occursin("PP_QIJL.", nodename(n))]
@@ -361,7 +367,7 @@ function upf2_dump_augmentation(aug::UpfAugmentation)::EzXML.Node
     node = ElementNode("PP_AUGMENTATION")
 
     for n in [n for n in fieldnames(UpfAugmentation) if
-        n != :qij && n != :qijl && n != :qfcoefs && n != :rinner && n != :multipoles && n != :q]
+        n ∉ (:qijs, :qijls, :qfcoefs, :rinner, :multipoles, :q)]
         set_attr!(node, n, getfield(aug, n))
     end
 
@@ -377,24 +383,30 @@ function upf2_dump_augmentation(aug::UpfAugmentation)::EzXML.Node
         addelement!(node, "PP_MULTIPOLES", array_to_text(aug.multipoles))
     end
 
-    # PP_QFCOEF
+    # PP_QFCOEF, as the Fortran array qfcoef(nqf, nqlc, nbeta, nbeta)
     if !isnothing(aug.qfcoefs)
-        # addelement!(node, "PP_QFCOEF", array_to_text(aug.qfcoefs))
-        @warn "Cannot dump UPF v2.0.1 with PP_QFCOEF"
+        nq = size(aug.q, 1)
+        n_l = length(first(aug.qfcoefs).qfcoef) ÷ aug.nqf
+        coefficients = zeros(Float64, aug.nqf, n_l, nq, nq)
+        for qfcoef in aug.qfcoefs
+            i, j = qfcoef.first_index, qfcoef.second_index
+            block = reshape(qfcoef.qfcoef, aug.nqf, n_l)
+            coefficients[:, :, i, j] = block
+            coefficients[:, :, j, i] = block
+        end
+        addelement!(node, "PP_QFCOEF", array_to_text(vec(coefficients)))
     end
 
     # PP_RINNER
     if !isnothing(aug.rinner)
-        # addelement!(node, "PP_RINNER", array_to_text(aug.rinner))
-        @warn "Cannot dump UPF v2.0.1 with PP_RINNER"
+        addelement!(node, "PP_RINNER", array_to_text(aug.rinner))
     end
 
     # PP_QIJ
     if !isnothing(aug.qijs)
-        #for qij in aug.qijs
-        #    link!(node, upf2_dump_qij(qij))
-        #end
-        @warn "Cannot dump UPF v2.0.1 with PP_QIJ.i.j"
+        for qij in aug.qijs
+            link!(node, upf2_dump_qij(qij))
+        end
     end
 
     # PP_QIJL

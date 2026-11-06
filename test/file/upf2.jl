@@ -807,4 +807,32 @@
     @test isempty(file.nonlocal.betas)
     @test size(file.nonlocal.dij) == (0, 0)
     end
+
+    @testset "Ultrasoft UPF v1 written as v2 (PP_QIJ, PP_QFCOEF, PP_RINNER)" begin
+        for filepath in values(UPF1_CASE_FILEPATHS)
+            psp = load_psp_file(filepath)
+            psp.header.is_ultrasoft || continue
+            outpath = joinpath(mktempdir(; cleanup = true), "tmp.upf")
+            save_psp_file(outpath, psp; format = "UPF v2.0.1")
+            newpsp = load_psp_file(outpath)
+
+            augmentation = psp.nonlocal.augmentation
+            new_augmentation = newpsp.nonlocal.augmentation
+            @test new_augmentation.q ≈ augmentation.q
+            @test new_augmentation.nqf == augmentation.nqf
+            @test length(new_augmentation.qijs) == length(augmentation.qijs)
+            for (new, old) in zip(new_augmentation.qijs, augmentation.qijs)
+                @test (new.first_index, new.second_index) == (old.first_index, old.second_index)
+                @test new.qij ≈ old.qij
+            end
+            if augmentation.nqf > 0
+                @test new_augmentation.rinner ≈ augmentation.rinner
+                for (new, old) in zip(new_augmentation.qfcoefs, augmentation.qfcoefs)
+                    @test (new.first_index, new.second_index) ==
+                          (old.first_index, old.second_index)
+                    @test new.qfcoef ≈ old.qfcoef
+                end
+            end
+        end
+    end
 end
