@@ -287,9 +287,15 @@ end
 UPF `<PP_FULL_WFC>`
 """
 struct UpfFullWfc
+    "All-electron partial waves `PP_AEWFC.i` (large component if fully relativistic)"
     aewfcs::Vector{UpfWfc}
+    "Pseudo partial waves `PP_PSWFC.i`"
     pswfcs::Vector{UpfWfc}
+    "Small components `PP_AEWFC_REL.i` of the all-electron partial waves (fully
+    relativistic PAW), or `nothing`"
+    aewfc_rels::Union{Nothing,Vector{UpfWfc}}
 end
+UpfFullWfc(aewfcs, pswfcs) = UpfFullWfc(aewfcs, pswfcs, nothing)
 
 """
 UPF `<PP_PAW>`

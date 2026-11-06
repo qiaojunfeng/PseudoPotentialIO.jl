@@ -601,8 +601,8 @@ function upf2_parse_wfc(node::EzXML.Node)
     return UpfWfc(wfc, index, l, label)
 end
 
-function upf2_dump_wfc(wfc::UpfWfc)::EzXML.Node
-    node = ElementNode("PP_PSWFC.$(wfc.index)")
+function upf2_dump_wfc(wfc::UpfWfc, tag::AbstractString = "PP_PSWFC")::EzXML.Node
+    node = ElementNode("$(tag).$(wfc.index)")
     set_attr!(node, "index", wfc.index)
     set_attr!(node, "l", wfc.l)
     set_attr!(node, "label", wfc.label)
@@ -612,13 +612,14 @@ function upf2_dump_wfc(wfc::UpfWfc)::EzXML.Node
 end
 
 function upf2_parse_full_wfc(node::EzXML.Node)
-    aewfc_nodes = [n for n in eachnode(node) if occursin("PP_AEWFC", nodename(n))]
-    aewfcs = upf2_parse_wfc.(aewfc_nodes)
+    # Match `PP_AEWFC.i` exactly: `PP_AEWFC_REL.i` holds the small components
+    nodes_of(tag) = [n for n in eachnode(node) if startswith(nodename(n), "$(tag).")]
+    aewfcs = upf2_parse_wfc.(nodes_of("PP_AEWFC"))
+    pswfcs = upf2_parse_wfc.(nodes_of("PP_PSWFC"))
+    rel_nodes = nodes_of("PP_AEWFC_REL")
+    aewfc_rels = isempty(rel_nodes) ? nothing : upf2_parse_wfc.(rel_nodes)
 
-    pswfc_nodes = [n for n in eachnode(node) if occursin("PP_PSWFC", nodename(n))]
-    pswfcs = upf2_parse_wfc.(pswfc_nodes)
-
-    return UpfFullWfc(aewfcs, pswfcs)
+    return UpfFullWfc(aewfcs, pswfcs, aewfc_rels)
 end
 function upf2_parse_full_wfc(doc::EzXML.Document)
     return upf2_parse_full_wfc(findfirst("PP_FULL_WFC", root(doc)))
@@ -627,10 +628,15 @@ end
 function upf2_dump_full_wfc(fwfc::UpfFullWfc)::EzXML.Node
     node = ElementNode("PP_FULL_WFC")
     for aewfc in fwfc.aewfcs
-        link!(node, upf2_dump_wfc(aewfc))
+        link!(node, upf2_dump_wfc(aewfc, "PP_AEWFC"))
+    end
+    if !isnothing(fwfc.aewfc_rels)
+        for aewfc_rel in fwfc.aewfc_rels
+            link!(node, upf2_dump_wfc(aewfc_rel, "PP_AEWFC_REL"))
+        end
     end
     for pswfc in fwfc.pswfcs
-        link!(node, upf2_dump_wfc(pswfc))
+        link!(node, upf2_dump_wfc(pswfc, "PP_PSWFC"))
     end
     return node
 end

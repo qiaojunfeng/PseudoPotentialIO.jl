@@ -835,4 +835,49 @@
             end
         end
     end
+
+    @testset "PAW partial waves (PP_AEWFC, PP_AEWFC_REL, PP_PSWFC)" begin
+        filepath = UPF2_CASE_FILEPATHS["Al.pbe-n-kjpaw_psl.1.0.0.UPF"]
+        psp = load_psp_file(filepath)
+        n_betas = length(psp.nonlocal.betas)
+        @test length(psp.full_wfc.aewfcs) == length(psp.full_wfc.pswfcs) == n_betas
+        @test isnothing(psp.full_wfc.aewfc_rels)
+
+        # A round trip keeps AE and PS partial waves apart
+        outpath = joinpath(mktempdir(; cleanup = true), "tmp.upf")
+        save_psp_file(outpath, psp; format = "UPF v2.0.1")
+        newpsp = load_psp_file(outpath)
+        for (new, old) in zip(newpsp.full_wfc.aewfcs, psp.full_wfc.aewfcs)
+            @test new.wfc ≈ old.wfc
+        end
+        for (new, old) in zip(newpsp.full_wfc.pswfcs, psp.full_wfc.pswfcs)
+            @test new.wfc ≈ old.wfc
+        end
+
+        # Fully relativistic PAW files add the small components PP_AEWFC_REL.i,
+        # which must not be read as AE partial waves. Build one by inserting
+        # copies of the PP_AEWFC.i blocks, scaled by 1/100, under the REL tag.
+        text = read(filepath, String)
+        blocks = [m.match for m in eachmatch(r"<PP_AEWFC\.\d+\b.*?</PP_AEWFC\.\d+>"s, text)]
+        @test length(blocks) == n_betas
+        rel_blocks = map(blocks) do block
+            block = replace(block, "PP_AEWFC." => "PP_AEWFC_REL.")
+            replace(block, r"-?\d\.\d+E[+-]\d+" => x -> string(parse(Float64, x) / 100))
+        end
+        last_block = blocks[end]
+        text = replace(text, last_block => last_block * "\n" * join(rel_blocks, "\n"))
+        relpath = joinpath(mktempdir(; cleanup = true), "rel.upf")
+        write(relpath, text)
+        relpsp = load_psp_file(relpath)
+        @test length(relpsp.full_wfc.aewfcs) == n_betas
+        @test length(relpsp.full_wfc.aewfc_rels) == n_betas
+        for (small, large) in zip(relpsp.full_wfc.aewfc_rels, psp.full_wfc.aewfcs)
+            @test small.wfc ≈ large.wfc ./ 100
+        end
+        save_psp_file(outpath, relpsp; format = "UPF v2.0.1")
+        newrelpsp = load_psp_file(outpath)
+        for (new, old) in zip(newrelpsp.full_wfc.aewfc_rels, relpsp.full_wfc.aewfc_rels)
+            @test new.wfc ≈ old.wfc
+        end
+    end
 end
